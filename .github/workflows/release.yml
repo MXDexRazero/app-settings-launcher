@@ -1,0 +1,70 @@
+name: Build and Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build_release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" >/dev/null 2>&1 || true
+
+      # 正式签名走 Secrets（可选）。未配置时 build.sh 会生成临时自签 keystore，
+      # 此时每次构建的签名都不同，覆盖安装前需先卸载旧版。
+      #
+      # 需要的 Secrets：
+      #   SIGNING_KEYSTORE_BASE64     base64(keystore 文件)
+      #   SIGNING_KEYSTORE_PASSWORD   keystore 密码
+      #   SIGNING_KEY_ALIAS           key 别名
+      #   SIGNING_KEY_PASSWORD        key 密码
+      #
+      # 生成方式（在本机执行）：
+      #   keytool -genkeypair -v -keystore launcher.keystore -alias launcher \
+      #     -keyalg RSA -keysize 2048 -validity 10950 -dname "CN=..., OU=..., O=..., C=CN"
+      #   base64 -w0 launcher.keystore > keystore.b64
+      - name: Restore signing keystore
+        if: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+        env:
+          KS_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KS_KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          echo "$KS_B64" | base64 -d > launcher.keystore
+          echo "KS_ALIAS=$KS_ALIAS" >> "$GITHUB_ENV"
+          echo "KS_STORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
+          echo "KS_KEY_PASS=$KS_KEY_PASS" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        run: bash build.sh
+
+      - name: Show APK info
+        run: ls -lh out/AppSettingsLauncher.apk
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
+          files: out/AppSettingsLauncher.apk
+          generate_release_notes: true

@@ -1,0 +1,6 @@
+build/
+out/
+
+# 正式签名密钥不入库
+*.keystore
+*.jks
