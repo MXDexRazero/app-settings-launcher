@@ -22,79 +22,110 @@ installed, "launch App Settings Launcher" is equivalent to opening
 ## Download
 
 Grab the latest `AppSettingsLauncher.apk` from the
-[Releases page](https://github.com/MXDexRazero/app-settings-launcher/releases/latest)
+**[Releases page](https://github.com/MXDexRazero/app-settings-launcher/releases/latest)**
 and install it on your phone.
 
 About **9 KB**, no permissions requested, no network access, no data collection.
 
-> **On signing**: release APKs are built by GitHub Actions. If no formal signing key
-> is configured, each build uses a throwaway self-signed certificate, which means
-> **signature mismatches will block over-install** — uninstall the old build first.
-> For consistent signatures across versions, add these repo secrets under
-> Settings → Secrets: `SIGNING_KEYSTORE_BASE64`, `SIGNING_KEYSTORE_PASSWORD`,
-> `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`.
+---
 
-## Typical use: scheduled "Security service" update rollback
+## Usage
 
-Combined with the
-**[gkd_subscription](https://github.com/MXDexRazero/gkd_subscription)** subscription,
-the whole flow can run in a chosen time window:
+### Step 1: Install and verify
+
+1. Download and install `AppSettingsLauncher.apk`
+2. An icon named **应用设置** appears on your home screen
+3. Tap it — **Settings → Application settings** should open directly, with no
+   intermediate screen
+
+If nothing happens, the target Activity cannot be started from outside on your
+device or OS version.
+
+### Step 2: Configure the automated task
+
+Open the system's **Automated tasks** (inside Security service) → create a new task:
+
+![Xiaomi automated task setup example](./docs/autotask-screenshot.png)
+
+| Section | Setting |
+|---|---|
+| Task name | 自动卸载 (auto uninstall) |
+| If (condition) | Specific time, e.g. `05:30` / every day |
+| Then (result) | Open app → choose **应用设置** |
+
+Save it. At the scheduled time the system launches Application settings, and the
+GKD subscription takes over from there.
+
+### Step 3: Pair it with the GKD subscription
+
+This APK only *opens* Application settings. Everything after that is driven by the
+**[gkd_subscription](https://github.com/MXDexRazero/gkd_subscription)** subscription:
 
 ```
-Automated task launches this APK on schedule
-      ↓
-Settings → Application settings opens
-      ↓
-GKD takes over: tap Security service → Uninstall updates → OK → exit Settings
+Automated task (schedule) → this APK opens Application settings →
+GKD: tap Security service → Uninstall updates → OK → exit Settings
 ```
 
-See that repo's README for setup steps.
+Both repos must be set up for the full chain to work. Subscription link:
+
+```
+https://raw.githubusercontent.com/MXDexRazero/gkd_subscription/main/dist/gkd.json5
+```
+
+---
+
+## What the rule does
+
+After the app list appears, three rules fire based on screen features
+(no `preKeys` — see below):
+
+| Step | Matched by | Action |
+|---|---|---|
+| 1 | Clickable ancestor of `TextView[vid="am_label"][text="安全服务"]` | Enter the details page |
+| 2 | Title is 安全服务 **and** 卸载 updates button exists | Tap Uninstall updates |
+| 3 | Dialog titled 要卸载更新吗？ | Tap `android:id/button1` (OK) |
+
+Every rule sets `matchDelay` + `actionDelay` to dodge the entry animation of
+Xiaomi's Settings screens. The group ships with `enable: false`, so you must
+turn it on manually.
+
+### Heads-up: why the screen vanishes
+
+The 安全服务 app *is* `com.miui.securitycenter` — the same package that hosts the
+Application settings screen. Uninstalling its updates `forceStop`s the app itself,
+so the screen disappears and you land back on the home screen. **Expected,
+not a broken rule.**
+
+---
 
 ## Required setup on Xiaomi / HyperOS
 
-Otherwise GKD behaves intermittently:
+Skipping these causes intermittent failures:
 
-1. Long-press GKD in Recents → **Lock** it
+1. Long-press GKD in Recents → **Lock** it so it is not cleared
 2. Settings → Apps → GKD → Battery saver **No restrictions** + enable **Autostart**
 3. Battery → App settings → GKD → No restrictions
-4. HyperOS recycles idle third-party accessibility services; when rules stop firing,
+4. HyperOS recycles third-party accessibility services when idle. If rules stop working,
    go to **Additional settings → Accessibility → Downloaded services** and tap GKD once
 
-## Build it yourself
+## FAQ
 
-**Option 1 — locally** (needs JDK 21 plus `platforms;android-34` and
-`build-tools;34.0.0`):
+**Nothing happens after I open Application settings**
 
-```shell
-bash build.sh
-```
+- Check that GKD's accessibility service shows as running
+- Check that the rule group is enabled (it is off by default)
+- Check that the screen title is 应用设置
 
-Output lands at `out/AppSettingsLauncher.apk`. The script auto-detects `ANDROID_HOME`
-and the installed build-tools version.
+**The log says it triggered, but the screen did not change**
 
-**Option 2 — GitHub Actions**
+GKD's `preKeys` conflicts with `matchDelay` / `actionDelay`, which can cause the click
+to be dropped. This subscription avoids `preKeys` and matches on screen features instead.
+If it still happens, increase the delay one notch.
 
-Push a tag starting with `v` and it builds and publishes to Releases automatically:
+**It may get auto-updated again**
 
-```shell
-git tag v1
-git push origin v1
-```
-
-You can also trigger `Build and Release APK` manually from the Actions tab.
-
-> JDK 21 emits class major version 65 by default, which d8 rejects — the script
-> pins `javac --release 8`. Do not remove that flag.
-
-## Project layout
-
-```
-.
-├── AndroidManifest.xml                       # manifest, translucent no-title theme
-├── java/com/mxd/launcher/MainActivity.java   # the only source file, the jump logic
-├── build.sh                                  # cross-platform packaging script
-└── .github/workflows/release.yml             # build and publish release
-```
+Xiaomi's app store can re-push updates for system apps. Disable auto-update there if you
+want it to stay rolled back.
 
 ## Related project
 
